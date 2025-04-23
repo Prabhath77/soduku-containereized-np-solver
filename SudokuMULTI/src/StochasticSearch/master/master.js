@@ -300,6 +300,11 @@ function combineSections(parentId) {
   const blueprint = currentBlueprintStore[parentId];
   
   if (!blueprint) {
+    console.error(`No blueprint available for job ${parentId}, falling back to initial blueprint`);
+    // Fall back to initial blueprint instead of throwing
+    if (initialBlueprintStore[parentId]) {
+      return initialBlueprintStore[parentId].map(row => [...row]);
+    }
     throw new Error(`No blueprint available for job ${parentId}`);
   }
   
@@ -307,19 +312,71 @@ function combineSections(parentId) {
   const combinedBoard = blueprint.map(row => [...row]);
   const [blockRows, blockCols] = getBlockDimensions(gridSize);
   
+  let validSubJobs = 0;
+  let invalidSubJobs = 0;
+  
   (completedJobs[parentId] || []).forEach(subJob => {
-    if (!isBlockValid(subJob.board, blockRows * blockCols)) {
-      throw new Error(`Sub-job ${subJob.id} block invalid.`);
-    }
-    const br = subJob.blockRow;
-    const bc = subJob.blockCol;
-    for (let i = 0; i < blockRows; i++) {
-      for (let j = 0; j < blockCols; j++) {
-        combinedBoard[br * blockRows + i][bc * blockCols + j] = subJob.board[i][j];
+    try {
+      // Check if subJob or its board is undefined/malformed
+      if (!subJob || !subJob.board || !Array.isArray(subJob.board)) {
+        console.error(`[DEBUG] Invalid sub-job structure for ${subJob?.id || 'unknown'}`);
+        invalidSubJobs++;
+        return; // Continue with next subjob - skip this one
       }
+      
+      // Validate the block dimensions
+      if (subJob.board.length !== blockRows || 
+          subJob.board.some(row => row.length !== blockCols)) {
+        console.error(`[DEBUG] Invalid dimensions for sub-job ${subJob.id}: expected ${blockRows}x${blockCols}`);
+        invalidSubJobs++;
+        return; // Continue with next subjob - skip this one
+      }
+      
+      // Check block validity
+      if (!isBlockValid(subJob.board, blockRows * blockCols)) {
+        console.error(`[DEBUG] Sub-job ${subJob.id} block invalid - skipping this block`);
+        invalidSubJobs++;
+        return; // Continue with next subjob - skip this one
+      }
+      
+      // Validate block position
+      if (typeof subJob.blockRow !== 'number' || typeof subJob.blockCol !== 'number' ||
+          subJob.blockRow < 0 || subJob.blockCol < 0 ||
+          subJob.blockRow >= gridSize/blockRows || subJob.blockCol >= gridSize/blockCols) {
+        console.error(`[DEBUG] Invalid block position for sub-job ${subJob.id}: (${subJob.blockRow}, ${subJob.blockCol})`);
+        invalidSubJobs++;
+        return; // Continue with next subjob - skip this one
+      }
+      
+      // Apply the block to the combined board with boundary checks
+      const br = subJob.blockRow;
+      const bc = subJob.blockCol;
+      
+      for (let i = 0; i < blockRows; i++) {
+        if (i >= subJob.board.length) continue;
+        
+        for (let j = 0; j < blockCols; j++) {
+          if (j >= subJob.board[i].length) continue;
+          
+          const globalRow = br * blockRows + i;
+          const globalCol = bc * blockCols + j;
+          
+          if (globalRow < gridSize && globalCol < gridSize) {
+            combinedBoard[globalRow][globalCol] = subJob.board[i][j];
+          }
+        }
+      }
+      
+      validSubJobs++;
+      
+    } catch (error) {
+      console.error(`[DEBUG] Error processing sub-job ${subJob?.id || 'unknown'}: ${error.message}`);
+      invalidSubJobs++;
+      return; // Continue with next subjob - skip this one
     }
   });
   
+  console.log(`[DEBUG] Combined ${validSubJobs} valid sub-jobs, skipped ${invalidSubJobs} invalid sub-jobs`);
   debugLog("Combined board", combinedBoard);
   return combinedBoard;
 }
@@ -529,29 +586,55 @@ app.get('/FinalsolvedResults', (req, res) => {
   }
   
   try {
-    if (completedJobs[jobId] && 
-        completedJobs[jobId].length === jobSubJobCount[jobId]) {
-      
-      const combinedBoard = combineSections(jobId);
-      
-      if (!combinedBoard.some(row => row.some(cell => cell === 0))) {
+    if (completedJobs[jobId] && completedJobs[jobId].length === jobSubJobCount[jobId]) {
+        try {
+          const combinedBoard = combineSections(jobId);
+          
+          // Check if the solution is complete (no zeros)
+          if (!combinedBoard.some(row => row.some(cell => cell === 0))) {
+            const elapsedMinutes = ((Date.now() - jobStartTimes[jobId]) / 60000).toFixed(2);
+            
+            // Store this result for future requests
+            finalSolvedResults[jobId] = {
+              jobId: jobId,
+              solvedBoard: combinedBoard,
+              status: 'completed',
+              solveTime: elapsedMinutes
+            };
+            
+            return res.status(200).json(finalSolvedResults[jobId]);
+          }
+        } catch (combineError) {
+          console.error(`Error combining results for job ${jobId}:`, combineError);
+          // Continue to the processing status response
+        }
+      }
+      // Check if job exists but is still in progress
+      if (jobStartTimes[jobId] || currentBlueprintStore[jobId]) {
+        const completedCount = completedJobs[jobId]?.length || 0;
+        const totalCount = jobSubJobCount[jobId] || 0;
+        
         return res.status(200).json({
           jobId: jobId,
-          solvedBoard: combinedBoard,
-          status: 'completed'
+          status: 'processing',
+          progress: totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
         });
       }
-    }
+      // Job not found
+      return res.status(404).json({
+        error: 'Job not found',
+        status: 'unknown'
+      });
+    } catch (error) {
+      console.error(`Error retrieving results for job ${jobId}:`, error);
     
-    return res.status(200).json({
-      jobId: jobId,
-      status: 'processing'
-    });
-  } catch (error) {
-    return res.status(500).json({
-      error: `Error retrieving results: ${error.message}`
-    });
-  }
+      // Return processing status instead of error to keep frontend polling
+      return res.status(200).json({
+        jobId: jobId,
+        status: 'processing',
+        message: 'An error occurred while retrieving results, but the job may still be processing'
+      });
+    }
 });
 
 // Process new Sudoku puzzle submission
