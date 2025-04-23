@@ -24,6 +24,9 @@ const nextSubJobIndex = {};
 
 const finalSolvedResults = {};
 
+const resultQueue = {};
+let isProcessingResults = false;
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
@@ -128,6 +131,8 @@ function splitAndQueueJob(jobId, board, gridSize, isRequeued = false) {
   nextSubJobIndex[jobId] = 1;
   console.log(`[DEBUG] Splitting board for job ${jobId}`);
 
+  let actualSubJobCount = 0;
+
   for (let br = 0; br < numBlocksRow; br++) {
     for (let bc = 0; bc < numBlocksCol; bc++) {
       let hasEmptyCell = false;
@@ -159,12 +164,21 @@ function splitAndQueueJob(jobId, board, gridSize, isRequeued = false) {
         subJobs.push(subJob);
         jobQueue.push(subJob);
         console.log(`[DEBUG] Queued sub-job ${subJobId} for block (${br}, ${bc})${isRequeued ? ' [REQUEUED]' : ''}`);
+        actualSubJobCount++;  // Count only blocks that need solving
       }
     }
   }
+  
+  // Update job count to reflect only blocks that need solving
+  if (!isRequeued) {
+    jobSubJobCount[jobId] = actualSubJobCount;
+  }
+  
   return subJobs;
 }
 
+// remove
+const lastBoardLogTimes = {};
 // Update the main board with cells that we're confident about
 function updatePartialBoardFromSure(parentId) {
   console.log(`[DEBUG] Updating partial board from sure values for job ${parentId}`);
@@ -215,8 +229,16 @@ function updatePartialBoardFromSure(parentId) {
     job.partialBoard = updatedBoard.map(row => [...row]);
   });
 
-  console.log(`[DEBUG] Blueprint updated for job ${parentId}`);
-  debugLog("Updated board", updatedBoard);
+  // console.log(`[DEBUG] Blueprint updated for job ${parentId}`);
+  // debugLog("Updated board", updatedBoard);
+
+  // Log with throttling
+  const now = Date.now();
+  if (!lastBoardLogTimes[parentId] || now - lastBoardLogTimes[parentId] > 5000) {
+    console.log(`[DEBUG] Blueprint updated for job ${parentId}`);
+    debugLog("Updated board", updatedBoard);
+    lastBoardLogTimes[parentId] = now;
+  }
   
   return hasChanges;
 }
@@ -311,8 +333,8 @@ function isValidSudoku(board) {
     const rowSet = new Set();
     for (let col = 0; col < gridSize; col++) {
       const value = board[row][col];
-      if (value === 0) return false; 
-      if (rowSet.has(value)) return false; 
+      if (value === 0) return false;
+      if (rowSet.has(value)) return false;
       rowSet.add(value);
     }
   }
@@ -346,11 +368,71 @@ function checkAndCombineResults() {
     const expected = jobSubJobCount[parentId];
     const actual = completedJobs[parentId] ? completedJobs[parentId].length : 0;
     
+    console.log(`[DEBUG] Job ${parentId}: ${actual}/${expected} subjobs completed`);
+
     if (actual > 0) {
       updatePartialBoardFromSure(parentId);
     }
-    
+
     const blueprint = currentBlueprintStore[parentId];
+    
+    // 1. Analyze which blocks still need processing
+    const [blockRows, blockCols] = getBlockDimensions(blueprint.length);
+    const numBlocksRow = blueprint.length / blockRows;
+    const numBlocksCol = blueprint.length / blockCols;
+    
+    // Track which blocks still need processing
+    const unsolvedBlocks = [];
+    let totalUnsolvedCells = 0;
+    
+    // Check each block to see if it's fully solved
+    for (let br = 0; br < numBlocksRow; br++) {
+      for (let bc = 0; bc < numBlocksCol; bc++) {
+        const blockGrid = extractBlock(blueprint, br, bc);
+        const emptyCellCount = blockGrid.flat().filter(cell => cell === 0).length;
+        
+        if (emptyCellCount > 0) {
+          unsolvedBlocks.push({ blockRow: br, blockCol: bc, emptyCellCount });
+          totalUnsolvedCells += emptyCellCount;
+        }
+      }
+    }
+    
+    // 2. Check if there are jobs for this parent in the queue
+    const jobsInQueue = jobQueue.filter(job => job.id.startsWith(`${parentId}.`)).length;
+    
+    console.log(`[DEBUG] Job ${parentId}: ${unsolvedBlocks.length} blocks with ${totalUnsolvedCells} unsolved cells, ${jobsInQueue} jobs in queue`);
+    
+    // 3. Make intelligent decisions about requeuing
+    if (unsolvedBlocks.length > 0 && jobsInQueue === 0) {
+      // We have unsolved blocks but no jobs in queue - possible stall
+      
+      // Check if we've made progress since last update
+      const lastBlueprint = completedJobs[parentId] && completedJobs[parentId].length > 0 ? 
+        completedJobs[parentId][0].originalBoard : initialBlueprintStore[parentId];
+      
+      // Count empty cells in last blueprint
+      const lastEmptyCells = lastBlueprint.flat().filter(cell => cell === 0).length;
+      const currentEmptyCells = blueprint.flat().filter(cell => cell === 0).length;
+      const progress = lastEmptyCells - currentEmptyCells;
+      
+      if (progress <= 0 && now - lastUpdateTimes[parentId] > 10000) {
+        // No progress made and it's been at least 10 seconds - try specific blocks first
+        console.log(`[DEBUG] STALLED JOB DETECTED: ${parentId} has ${unsolvedBlocks.length} unsolved blocks with no progress`);
+        
+        if (unsolvedBlocks.length <= 3) {
+          // If only a few blocks are problematic, just requeue those
+          console.log(`[DEBUG] Requeuing only ${unsolvedBlocks.length} problem blocks`);
+          requeueConflictingBlocks(parentId, unsolvedBlocks);
+        } else {
+          // Too many problem blocks, do a full requeue
+          console.log(`[DEBUG] Too many problem blocks (${unsolvedBlocks.length}), doing full requeue`);
+          requeueJobs(parentId);
+        }
+        return; // Skip further processing for this job
+      }
+    }
+
     const isCompleteBlueprint = blueprint.every(row => row.every(cell => cell !== 0));
 
     const threshold = 90000 * (blueprint.length / 9);
@@ -561,16 +643,120 @@ app.get('/queue', (req, res) => {
 });
 
 // Process results from workers
+// app.post('/result', (req, res) => {
+//   const { id, board, blockRow, blockCol, triedNumbers, originalBoard, sure, partialBoard } = req.body;
+  
+//   const orig = partialBoard || originalBoard;
+//   if (!id || !board || blockRow === undefined || blockCol === undefined || typeof sure === 'undefined') {
+//     return res.status(400).json({ error: 'Missing id, board, blockRow, blockCol, or sure array' });
+//   }
+  
+//   const parentId = id.split('.')[0];
+//   let finalOrig = orig;
+  
+//   if (!finalOrig) {
+//     const subJobs = originalSubJobsStore[parentId];
+//     if (subJobs) {
+//       const subJob = subJobs.find(job => job.id === id);
+//       if (subJob) finalOrig = subJob.partialBoard || subJob.originalBoard;
+//     }
+//   }
+  
+//   if (!finalOrig && initialBlueprintStore[parentId]) {
+//     finalOrig = initialBlueprintStore[parentId];
+//   }
+  
+//   if (!finalOrig) {
+//     return res.status(400).json({ error: 'Partial board missing' });
+//   }
+  
+//   console.log(`[DEBUG] Received result for sub-job ${id}`);
+//   debugLog("Result board", board);
+//   debugLog("Sure mask", sure);
+  
+//   // Store the result
+//   if (!completedJobs[parentId]) {
+//     completedJobs[parentId] = [];
+//   }
+//   completedJobs[parentId].push({ id, board, blockRow, blockCol, triedNumbers, originalBoard: finalOrig, sure });
+//   lastUpdateTimes[parentId] = Date.now();
+  
+//   updatePartialBoardFromSure(parentId);
+  
+//   res.status(200).json({ id, status: 'partial' });
+// });
+
 app.post('/result', (req, res) => {
   const { id, board, blockRow, blockCol, triedNumbers, originalBoard, sure, partialBoard } = req.body;
   
-  const orig = partialBoard || originalBoard;
   if (!id || !board || blockRow === undefined || blockCol === undefined || typeof sure === 'undefined') {
     return res.status(400).json({ error: 'Missing id, board, blockRow, blockCol, or sure array' });
   }
   
   const parentId = id.split('.')[0];
-  let finalOrig = orig;
+  
+  // Add to queue instead of processing immediately
+  if (!resultQueue[parentId]) {
+    resultQueue[parentId] = [];
+  }
+  
+  // Queue the result with all its data
+  resultQueue[parentId].push({
+    id, board, blockRow, blockCol, triedNumbers, originalBoard, sure, partialBoard
+  });
+  
+  // Update timestamp
+  lastUpdateTimes[parentId] = Date.now();
+  
+  console.log(`[DEBUG] Queued result for sub-job ${id} (${resultQueue[parentId].length} results pending for job ${parentId})`);
+  
+  // Respond immediately without waiting for processing
+  res.status(200).json({ id, status: 'queued' });
+  
+  // Trigger processing if not already running
+  if (!isProcessingResults) {
+    processResultQueue();
+  }
+});
+
+// New function to process results sequentially
+async function processResultQueue() {
+  if (isProcessingResults) return;
+  
+  isProcessingResults = true;
+  
+  try {
+    // Process each job's results
+    for (const parentId of Object.keys(resultQueue)) {
+      // Process all queued results for this job
+      while (resultQueue[parentId] && resultQueue[parentId].length > 0) {
+        const result = resultQueue[parentId].shift();
+        await processResult(result);
+      }
+      
+      // Clean up empty queues
+      if (resultQueue[parentId] && resultQueue[parentId].length === 0) {
+        delete resultQueue[parentId];
+      }
+    }
+  } catch (error) {
+    console.error('[DEBUG] Error processing result queue:', error);
+  } finally {
+    isProcessingResults = false;
+    
+    // Check if more results arrived while processing
+    if (Object.keys(resultQueue).some(key => resultQueue[key].length > 0)) {
+      setImmediate(processResultQueue);
+    }
+  }
+}
+
+// Process a single result
+async function processResult(result) {
+  const { id, board, blockRow, blockCol, triedNumbers, originalBoard, sure, partialBoard } = result;
+  
+  const parentId = id.split('.')[0];
+  let finalOrig = partialBoard || originalBoard;
   
   if (!finalOrig) {
     const subJobs = originalSubJobsStore[parentId];
@@ -585,10 +771,11 @@ app.post('/result', (req, res) => {
   }
   
   if (!finalOrig) {
-    return res.status(400).json({ error: 'Partial board missing' });
+    console.error(`[DEBUG] Partial board missing for job ${id}`);
+    return;
   }
   
-  console.log(`[DEBUG] Received result for sub-job ${id}`);
+  console.log(`[DEBUG] Processing result for sub-job ${id}`);
   debugLog("Result board", board);
   debugLog("Sure mask", sure);
   
@@ -596,13 +783,15 @@ app.post('/result', (req, res) => {
   if (!completedJobs[parentId]) {
     completedJobs[parentId] = [];
   }
-  completedJobs[parentId].push({ id, board, blockRow, blockCol, triedNumbers, originalBoard: finalOrig, sure });
-  lastUpdateTimes[parentId] = Date.now();
   
+  completedJobs[parentId].push({ 
+    id, board, blockRow, blockCol, triedNumbers, 
+    originalBoard: finalOrig, sure 
+  });
+  
+  // Update the partial board with new results
   updatePartialBoardFromSure(parentId);
-  
-  res.status(200).json({ id, status: 'partial' });
-});
+}
 
 // Start the result checking process
 checkAndCombineResults();
