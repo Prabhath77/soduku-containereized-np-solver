@@ -1,0 +1,25 @@
+FROM node:18-slim
+
+# Create app directory
+WORKDIR /app
+
+# Copy package files and install dependencies
+COPY package.json ./
+RUN npm install --production
+# Copy application files
+COPY index.html config.js script.js server.js ./
+
+# Copy favicon and image assets
+COPY favicon.ico apple-touch-icon.png favicon-32x32.png favicon-16x16.png grid.jpg ./
+
+# Create site.webmanifest file
+RUN echo '{"name":"Sudoku Solver Hub","short_name":"Sudoku Solver","icons":[{"src":"favicon.ico","sizes":"64x64 32x32 24x24 16x16","type":"image/x-icon"}],"start_url":".","display":"standalone","theme_color":"#0844A4","background_color":"#F4F7FC"}' > site.webmanifest
+
+# Set environment to production
+ENV NODE_ENV=production
+
+# Expose the port the app runs on
+EXPOSE 80
+
+# Start the application
+CMD ["npm", "start"]

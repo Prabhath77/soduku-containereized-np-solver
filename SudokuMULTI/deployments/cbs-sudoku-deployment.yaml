@@ -1,0 +1,62 @@
+# Master Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: columnbased-master-deployment
+  labels:
+    app: columnbased-master
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: columnbased-master
+  template:
+    metadata:
+      labels:
+        app: columnbased-master
+    spec:
+      containers:
+        - name: columnbased-master
+          image: prabhath77/m-cbsmy-sudoku-master:v13
+          ports:
+            - containerPort: 3005
+---
+# Master Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: columnbased-master-service
+  labels:
+    app: columnbased-master
+spec:
+  selector:
+    app: columnbased-master
+  ports:
+    - protocol: TCP
+      port: 3005
+      targetPort: 3005
+  type: ClusterIP
+---
+# Slave Deployment (15 replicas, portless)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: columnbased-slave-deployment
+  labels:
+    app: columnbased-slave
+spec:
+  replicas: 9
+  selector:
+    matchLabels:
+      app: columnbased-slave
+  template:
+    metadata:
+      labels:
+        app: columnbased-slave
+    spec:
+      containers:
+        - name: columnbased-slave
+          image: prabhath77/m-cbsmy-sudoku-slave:v13
+          env:
+            - name: MASTER_URL
+              value: "http://columnbased-master-service:3005"

@@ -1,0 +1,62 @@
+# Master Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stochasticsearch-master-deployment
+  labels:
+    app: stochasticsearch-master
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stochasticsearch-master
+  template:
+    metadata:
+      labels:
+        app: stochasticsearch-master
+    spec:
+      containers:
+        - name: stochasticsearch-master
+          image: prabhath77/m-ssmy-sudoku-master:v18
+          ports:
+            - containerPort: 3010
+---
+# Master Service
+apiVersion: v1
+kind: Service 
+metadata:
+  name: stochasticsearch-master-service
+  labels:
+    app: stochasticsearch-master
+spec:
+  selector:
+    app: stochasticsearch-master
+  ports:
+    - protocol: TCP
+      port: 3010
+      targetPort: 3010
+  type: ClusterIP
+---
+# Slave Deployment (4 replicas, portless)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stochasticsearch-slave-deployment
+  labels:
+    app: stochasticsearch-slave
+spec:
+  replicas: 9
+  selector:
+    matchLabels:
+      app: stochasticsearch-slave
+  template:
+    metadata:
+      labels:
+        app: stochasticsearch-slave
+    spec:
+      containers:
+        - name: stochasticsearch-slave
+          image: prabhath77/m-ssmy-sudoku-slave:v18
+          env:
+            - name: MASTER_URL 
+              value: "http://stochasticsearch-master-service:3010"

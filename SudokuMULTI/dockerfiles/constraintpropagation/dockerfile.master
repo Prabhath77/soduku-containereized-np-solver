@@ -1,0 +1,26 @@
+# Use an official Node runtime as the base image.
+FROM node:18-alpine
+
+# Set the working directory.
+WORKDIR /app
+
+# Copy package files from the master folder and install dependencies.
+COPY package*.json ./
+RUN npm install && mkdir SaveSolutions
+
+# Copy master.js from the master folder.
+COPY src/ConstraintPropagationBacktracking/master/master.js ./
+
+# Copy the shared solver.js from the parent context into /app.
+COPY src/ConstraintPropagationBacktracking/solver.js ./
+
+
+
+COPY src/ConstraintPropagationBacktracking/master/SaveSolution.js ./
+
+
+# Expose the port
+EXPOSE 3000
+
+# Run the master service with increased memory limit
+CMD ["node", "--max-old-space-size=4096", "master.js"]

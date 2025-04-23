@@ -1,0 +1,38 @@
+# Combined Master-Slave Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backtracking-single-combined
+  labels:
+    app: backtracking-single-combined
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backtracking-single-combined
+  template:
+    metadata:
+      labels:
+        app: backtracking-single-combined
+    spec:
+      containers:
+      - name: backtracking-single-combined
+        image: prabhath77/s-btmy-sudoku-solver:v2
+        ports:
+        - containerPort: 3050
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: backtracking-single-master-service
+  labels:
+    app: backtracking-single-combined
+spec:
+  selector:
+    app: backtracking-single-combined
+  ports:
+  - protocol: TCP
+    port: 3050
+    targetPort: 3050
+  type: ClusterIP

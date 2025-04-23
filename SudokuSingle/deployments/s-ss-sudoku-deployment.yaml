@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stochasticsearch-single-combined
+  labels:
+    app: stochasticsearch-single-combined
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stochasticsearch-single-combined
+  template:
+    metadata:
+      labels:
+        app: stochasticsearch-single-combined
+    spec:
+      containers:
+      - name: stochasticsearch-single-combined
+        image: prabhath77/s-ssmy-sudoku-solver:v1
+        ports:
+        - containerPort: 3070
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: stochasticsearch-single-master-service
+  labels:
+    app: stochasticsearch-single-combined
+spec:
+  selector:
+    app: stochasticsearch-single-combined
+  ports:
+  - protocol: TCP
+    port: 3070
+    targetPort: 3070
+  type: ClusterIP

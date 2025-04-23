@@ -1,0 +1,30 @@
+# Use an official Node runtime as the base image.
+FROM node:18-alpine
+
+# Set the working directory.
+WORKDIR /app
+
+# Copy package files from the master folder and install dependencies.
+COPY package*.json ./
+RUN npm install && mkdir solutions
+
+# Copy master.js from the master folder.
+COPY src/BackTracking/master/master.js ./
+
+# Copy slave.js from the slave folder
+COPY src/BackTracking/slave/slave.js ./
+
+# Copy the shared solver.js from the parent context into /app.
+COPY src/BackTracking/solver.js ./
+
+COPY src/BackTracking/master/saveSolution.js ./
+
+# Create a startup script in a more reliable way
+RUN printf '#!/bin/sh\nnode --max-old-space-size=4096 master.js &\nMaster_PID=$!\nnode --max-old-space-size=4096 slave.js &\nSlave_PID=$!\nwait $Master_PID $Slave_PID\n' > /app/start.sh
+RUN chmod +x /app/start.sh
+
+# Expose the port
+EXPOSE 3050
+
+# Run both master and slave using the startup script with absolute path
+CMD ["/app/start.sh"]

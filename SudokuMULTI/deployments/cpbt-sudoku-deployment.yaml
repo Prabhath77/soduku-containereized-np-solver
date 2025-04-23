@@ -1,0 +1,62 @@
+# Master Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: master-deployment
+  labels:
+    app: master
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: master
+  template:
+    metadata:
+      labels:
+        app: master
+    spec:
+      containers:
+      - name: master
+        image: prabhath77/m-cpbtmy-sudoku-master:v29
+        ports:
+        - containerPort: 3000
+---
+# Master Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: master-service
+  labels:
+    app: master
+spec:
+  selector:
+    app: master
+  ports:
+  - protocol: TCP
+    port: 3000
+    targetPort: 3000
+  type: ClusterIP
+---
+# Slave Deployment (15 replicas, portless)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slave-deployment
+  labels:
+    app: slave
+spec:
+  replicas: 9
+  selector:
+    matchLabels:
+      app: slave
+  template:
+    metadata:
+      labels:
+        app: slave
+    spec:
+      containers:
+      - name: slave
+        image: prabhath77/m-cpbtmy-sudoku-slave:v29
+        env:
+        - name: MASTER_URL
+          value: "http://master-service:3000"

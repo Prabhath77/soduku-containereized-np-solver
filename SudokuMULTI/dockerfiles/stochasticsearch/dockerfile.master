@@ -1,0 +1,24 @@
+# Use an official Node runtime as the base image.
+FROM node:18-alpine
+
+# Set the working directory.
+WORKDIR /app
+
+# Copy package files from the master folder and install dependencies.
+COPY package*.json ./
+RUN npm install && mkdir SavedSolutions
+
+# Copy master.js from the master folder.
+COPY src/StochasticSearch/master/master.js ./
+
+# Copy the shared solver.js from the parent context into /app.
+COPY src/StochasticSearch/solver.js ./
+
+
+
+COPY src/StochasticSearch/master/SaveSolution.js ./
+
+# Expose the port
+EXPOSE 3010
+
+CMD ["node", "--max-old-space-size=4096", "master.js"]

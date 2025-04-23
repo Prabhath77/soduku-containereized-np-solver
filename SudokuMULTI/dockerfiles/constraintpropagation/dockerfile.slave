@@ -1,0 +1,17 @@
+# Use an official Node runtime as the base image.
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy only the package files from the slave folder and install dependencies.
+COPY package*.json ./
+RUN npm install
+
+# Copy your slave code from the slave folder.
+COPY src/ConstraintPropagationBacktracking/slave/slave.js ./
+
+# Copy the shared solver.js from the parent folder.
+COPY src/ConstraintPropagationBacktracking/solver.js ./
+
+
+CMD ["node", "--max-old-space-size=4096", "slave.js"]

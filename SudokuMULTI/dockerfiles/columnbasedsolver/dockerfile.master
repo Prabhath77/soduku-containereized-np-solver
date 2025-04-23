@@ -1,0 +1,23 @@
+# Use an official Node runtime as the base image.
+FROM node:18-alpine
+
+# Set the working directory.
+WORKDIR /app
+
+# Copy package files from the master folder and install dependencies.
+COPY package*.json ./
+RUN npm install && mkdir SaveSolutions
+
+# Copy master.js from the master folder.
+COPY src/ColumnBasedSolver/master/master.js ./
+
+# Copy the shared solver.js from the parent context into /app.
+COPY src/ColumnBasedSolver/solver.js ./
+
+COPY src/ColumnBasedSolver/master/SaveSolution.js ./
+
+# Expose the port
+EXPOSE 3005
+
+# Run the master service with increased memory limit
+CMD ["node", "--max-old-space-size=4096", "master.js"]

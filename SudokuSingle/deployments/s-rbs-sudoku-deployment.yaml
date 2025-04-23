@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rulebased-single-combined
+  labels:
+    app: rulebased-single-combined
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rulebased-single-combined
+  template:
+    metadata:
+      labels:
+        app: rulebased-single-combined
+    spec:
+      containers:
+      - name: rulebased-single-combined
+        image: prabhath77/s-rbsmy-sudoku-solver:v1
+        ports:
+        - containerPort: 3060
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rulebased-single-master-service
+  labels:
+    app: rulebased-single-combined
+spec:
+  selector:
+    app: rulebased-single-combined
+  ports:
+  - protocol: TCP
+    port: 3060
+    targetPort: 3060
+  type: ClusterIP
