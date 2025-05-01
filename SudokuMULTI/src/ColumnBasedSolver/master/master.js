@@ -3,39 +3,49 @@ const http = require('http');
 const path = require('path');
 const cors = require('cors');
 const { saveSolutionToFile } = require('./SaveSolution.js');
-const { SudokuSolver } = require('./solver.js');
+const { SudokuSolver, enhancedConstraintPropagation } = require('/Users/harshsharma/Desktop/Sudoku/backup zips/SudokuMULTI 2/src/ColumnBasedSolver/solver.js');
+
 const app = express();
 const server = http.createServer(app);
 
-const PORT = 3005; // Master server port
+const PORT = 3005; // This server listens on port 3005
 
-// Storage structures for tracking distributed Sudoku solving jobs
-const jobQueue = [];
-const completedJobs = {};          // Results organized by job ID
-const originalSubJobsStore = {};   // Initial sub-jobs by job ID
-const currentBlueprintStore = {};  // Current puzzle state
-const jobStartTimes = {};          // Time tracking for jobs
-const lastUpdateTimes = {};
-const finalSolvedResults = {};     // Completed solutions
+// These variables help us keep track of all the Sudoku puzzles we're solving
+// Think of them as different filing cabinets for our work
+const jobQueue = [];                // List of tasks waiting to be solved
+const completedJobs = {};           // Solutions we've finished, organized by puzzle ID
+const originalSubJobsStore = {};    // The initial breakdown of each puzzle into columns
+const currentBlueprintStore = {};   // Current state of each puzzle as we solve it
+const jobStartTimes = {};           // When we started working on each puzzle
+const lastUpdateTimes = {};         // When we last made progress on each puzzle
+const finalSolvedResults = {};      // Completely solved puzzles ready for delivery
 
-// Tracks assignment order for sub-jobs
+// Keeps track of how we name each sub-task
 const nextSubJobIndex = {};
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
-// Helper function for detailed logging during development
+// Prints detailed info during development to help us find problems
 function debugLog(prefix, data) {
   console.log(`[DEBUG] ${prefix}:`, JSON.stringify(data, null, 2));
 }
 
-// Checks if a board is empty (all zeros)
+// Checks if a Sudoku board is completely empty (all zeros)
+// This helps us know if we're starting with a blank slate
 function isEmptyBoard(board) {
   return board.every(row => row.every(cell => cell === 0));
 }
 
-// Validates if a column contains all required numbers exactly once
+// Uses advanced techniques to fill in obvious numbers before we start complex solving
+// This is like solving the "pencil marks" in a Sudoku before guessing
+function applyAdvancedConstraintPropagation(board) {
+  return enhancedConstraintPropagation(board);
+}
+
+// Makes sure a column has all numbers 1-9 (or 1-N) exactly once
+// This is one way we check if our solution is correct
 function isColumnValid(column, fullSize) {
   const expectedSet = new Set();
   for (let d = 1; d <= fullSize; d++) {
@@ -51,7 +61,8 @@ function isColumnValid(column, fullSize) {
   return true;
 }
 
-// Assembles individual column solutions into a complete board
+// Takes all the solved columns and puts them back together into a full Sudoku board
+// Like assembling puzzle pieces back into the complete picture
 function combineSections(jobId) {
   const blueprint = currentBlueprintStore[jobId];
   const gridSize = blueprint.length;
@@ -70,7 +81,8 @@ function combineSections(jobId) {
   return combinedBoard;
 }
 
-// Performs full validation of a Sudoku solution
+// Checks if a complete Sudoku board follows all the rules
+// It verifies rows, columns, and boxes all have unique numbers
 function isValidSudoku(board) {
   const n = board.length;
   const root = Math.sqrt(n);
@@ -104,20 +116,14 @@ function isValidSudoku(board) {
   return true;
 }
 
-// Gets a single column from a Sudoku board
+// Pulls out a single column from the Sudoku board
+// We solve one column at a time to break down the problem
 function extractColumn(board, col) {
   const gridSize = board.length;
   const column = [];
   for (let row = 0; row < gridSize; row++) {
     column.push([board[row][col]]);
   }
-  return column;
-}
-
-// Identifies columns with validation issues
-function getConflictingColumns(combinedBoard) {
-  const gridSize = combinedBoard.length;
-  const conflictingColumns = [];
   for (let col = 0; col < gridSize; col++) {
     const column = [];
     for (let row = 0; row < gridSize; row++) {
@@ -170,6 +176,10 @@ function updatePartialBoardFromSure(jobId) {
       updatedBoard[row][col] = result.sure && result.sure[row] ? result.board[row][0] : 0;
     }
   });
+  
+  // Apply advanced constraint propagation to potentially discover more values
+  applyAdvancedConstraintPropagation(updatedBoard);
+  
   debugLog("Updated partial board", updatedBoard);
   currentBlueprintStore[jobId] = updatedBoard;
   originalSubJobsStore[jobId].forEach(job => {
@@ -189,6 +199,10 @@ function requeueJobs(jobId) {
       if (flag) updatedBoard[r][col] = result.board[r][0];
     });
   });
+  
+  // Apply advanced constraint propagation before requeuing
+  applyAdvancedConstraintPropagation(updatedBoard);
+  
   debugLog("Updated blueprint board", updatedBoard);
   currentBlueprintStore[jobId] = updatedBoard;
   nextSubJobIndex[jobId] = 1;
@@ -227,6 +241,25 @@ app.get('/FinalsolvedResults', (req, res) => {
   if (finalSolvedResults[jobId]) {
     return res.status(200).json({ jobId, solvedBoard: finalSolvedResults[jobId].board, status: 'completed' });
   }
+  
+  // Check if we can solve it with the current state
+  const cur = currentBlueprintStore[jobId];
+  if (cur && isValidSudoku(cur)) {
+    finalSolvedResults[jobId] = { board: cur, timestamp: Date.now() };
+    return res.status(200).json({ 
+      jobId, 
+      solvedBoard: cur, 
+      status: 'completed'
+    });
+  }
+  
+  // Return progress information
+  if (cur) {
+    const filled = cur.flat().filter(v => v !== 0).length;
+    const total = cur.length * cur.length;
+    return res.json({ status: 'processing', progress: Math.floor((filled / total) * 100) });
+  }
+  
   return res.status(404).json({ error: 'Solution not found or not ready' });
 });
 
@@ -237,25 +270,51 @@ app.post('/solve', (req, res) => {
   const gridSize = board.length;
   const jobId = Date.now().toString();
   jobStartTimes[jobId] = Date.now();
-  if (isEmptyBoard(board)) {
+  
+  // Create a working copy of the board
+  const workingBoard = board.map(row => [...row]);
+  
+  // Apply advanced constraint propagation to the entire board first
+  applyAdvancedConstraintPropagation(workingBoard);
+  
+  // Check if the board is already solved by constraint propagation alone
+  if (workingBoard.flat().every(v => v !== 0) && isValidSudoku(workingBoard)) {
+    finalSolvedResults[jobId] = { 
+      board: workingBoard, 
+      timestamp: Date.now() 
+    };
+    saveSolutionToFile(jobId, workingBoard);
+    return res.json({ 
+      jobId, 
+      status: 'completed',
+      solvedBoard: workingBoard 
+    });
+  }
+  
+  // If the board is empty, pre-solve the first column to give a starting point
+  if (isEmptyBoard(workingBoard)) {
     try {
-      const col0 = board.map(r => [r[0]]);
+      const col0 = workingBoard.map(r => [r[0]]);
       const solver = new SudokuSolver();
-      const result = solver.hybridSolve(col0, board, 0);
+      const result = solver.hybridSolve(col0, workingBoard, 0);
       result.sure = Array.isArray(result.sure) ? result.sure.map(() => true) : [];
-      for (let i = 0; i < gridSize; i++) board[i][0] = result.column[i][0];
+      for (let i = 0; i < gridSize; i++) workingBoard[i][0] = result.column[i][0];
       completedJobs[jobId] = [];
       nextSubJobIndex[jobId] = 1;
       const subJobId = `${jobId}.${nextSubJobIndex[jobId]++}`;
-      completedJobs[jobId].push({ id: subJobId, board: result.column, colIndex: 0, triedNumbers: {}, originalBoard: board, sure: result.sure });
+      completedJobs[jobId].push({ id: subJobId, board: result.column, colIndex: 0, triedNumbers: {}, originalBoard: workingBoard, sure: result.sure });
+      
+      // Apply constraint propagation again after setting first column
+      applyAdvancedConstraintPropagation(workingBoard);
     } catch (e) {
-      return res.status(500).json({ error: 'Error pre-solving empty grid.' });
+      console.error("[ERROR] Failed to pre-solve first column:", e);
     }
   }
-  currentBlueprintStore[jobId] = board;
-  originalSubJobsStore[jobId] = splitAndQueueJob(jobId, board, gridSize);
+  
+  currentBlueprintStore[jobId] = workingBoard;
+  originalSubJobsStore[jobId] = splitAndQueueJob(jobId, workingBoard, gridSize);
   lastUpdateTimes[jobId] = Date.now();
-  res.status(200).json({ jobId, message: 'Job accepted and queued', status: 'processing', partialBoard: board });
+  res.status(200).json({ jobId, message: 'Job accepted and queued', status: 'processing', partialBoard: workingBoard });
 });
 
 // API endpoint for checking queue size
@@ -272,7 +331,7 @@ app.get('/queue', (req, res) => {
   res.status(200).json(job);
 });
 
-// API endpoint for workers to submit completed column solutions
+// Endpoints for workers to submit completed Column solutions.
 app.post('/result', (req, res) => {
   const { id, board, colIndex, sure } = req.body;
   const jobId = id.split('.')[0];
@@ -287,6 +346,9 @@ app.post('/result', (req, res) => {
   completedJobs[jobId].push({ id, board, colIndex, sure });
   lastUpdateTimes[jobId] = Date.now();
   
+  // Update the partial board with constraint propagation for naked singles
+  updatePartialBoardFromSure(jobId);
+  
   const expected = originalSubJobsStore[jobId]?.length || 0;
   const completed = completedJobs[jobId]?.length || 0;
   console.log(`[DEBUG] Progress for job ${jobId}: ${completed}/${expected} columns completed`);
@@ -294,7 +356,7 @@ app.post('/result', (req, res) => {
   res.json({ status: 'received' });
 });
 
-// Periodically checks for completed jobs and combines their results
+// Periodic checks for completed jobs and combinining their results
 function checkAndCombineResults() {
   const now = Date.now();
   Object.keys(originalSubJobsStore).forEach(jobId => {
@@ -337,8 +399,11 @@ function checkAndCombineResults() {
         requeueJobs(jobId);
       }
     } else if (actual > 0) {
+      // Apply constraint propagation periodically even without complete columns
       updatePartialBoardFromSure(jobId);
-      const threshold = 60000;  // 1 minute
+      
+      // Increase timeout threshold for more complex puzzles
+      const threshold = 120000; // 2 minutes
       if (now - (lastUpdateTimes[jobId] || 0) > threshold) {
         console.log(`[DEBUG] Job ${jobId} stalled (${actual}/${expected}), requeuing all columns`);
         requeueJobs(jobId);

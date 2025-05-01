@@ -2,9 +2,9 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const cors = require('cors');
-const { getBlockDimensions } = require('/Users/harshsharma/Desktop/Sudoku/SudokuMULTI/src/ConstraintPropagationBacktracking/solver.js');
+const { getBlockDimensions, isValid, enhancedConstraintPropagation } = require('/Users/harshsharma/Desktop/Sudoku/backup zips/SudokuMULTI 2/src/ConstraintPropagationBacktracking/solver.js');
 const { saveSolutionToFile } = require('./SaveSolution.js');
-const { StochasticBlockSolver } = require('/Users/harshsharma/Desktop/Sudoku/SudokuMULTI/src/ConstraintPropagationBacktracking/solver.js');
+const { StochasticBlockSolver } = require('/Users/harshsharma/Desktop/Sudoku/backup zips/SudokuMULTI 2/src/ConstraintPropagationBacktracking/solver.js');
 
 const app = express();
 const server = http.createServer(app);
@@ -25,6 +25,11 @@ const nextSubJobIndex = {};
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
+
+// Apply advanced constraint propagation to the entire board
+function applyAdvancedConstraintPropagation(board) {
+  return enhancedConstraintPropagation(board);
+}
 
 // Free memory by removing all data for completed jobs
 function cleanupJobData(jobId) {
@@ -112,6 +117,9 @@ function updatePartialBoardFromSure(jobId) {
       }
     }
   });
+  
+  // Apply advanced constraint propagation to potentially discover more values
+  applyAdvancedConstraintPropagation(updated);
 
   currentBlueprintStore[jobId] = updated;
   originalSubJobsStore[jobId].forEach(sb => sb.isRequeued = true);
@@ -270,7 +278,8 @@ function checkAndCombineResults() {
 
     if (actual < expected) {
       // Requeue if no progress after threshold time
-      const threshold = 90000 * ((currentBlueprintStore[jobId]?.length || 9) / 9);
+      // Use a longer threshold for difficult puzzles
+      const threshold = 120000 * ((currentBlueprintStore[jobId]?.length || 9) / 9);
       if (now - (lastUpdateTimes[jobId] || 0) > threshold) requeueAll(jobId);
     } else {
       console.log(`[DEBUG] All results (${actual}/${expected}) received for job ${jobId}, combining board...`);
@@ -313,6 +322,26 @@ app.post('/solve', (req, res) => {
 
   jobStartTimes[jobId] = Date.now();
   initialBlueprintStore[jobId] = board.map(r => [...r]);
+  
+  // Create a working copy of the board
+  const workingBoard = board.map(r => [...r]);
+  
+  // Apply advanced constraint propagation to the entire board first
+  applyAdvancedConstraintPropagation(workingBoard);
+  
+  // Check if the board is already solved
+  if (workingBoard.flat().every(v => v !== 0) && isValidSudoku(workingBoard)) {
+    finalSolvedResults[jobId] = { 
+      board: workingBoard, 
+      timestamp: Date.now() 
+    };
+    saveSolutionToFile(jobId, workingBoard);
+    return res.json({ 
+      jobId, 
+      status: 'completed',
+      solvedBoard: workingBoard 
+    });
+  }
 
   // Handle completely empty boards with direct solver
   if (board.flat().every(v => v === 0)) {
@@ -322,16 +351,16 @@ app.post('/solve', (req, res) => {
       const [rSize, cSize] = getBlockDimensions(N);
       for (let i = 0; i < rSize; i++) {
         for (let j = 0; j < cSize; j++) {
-          board[i][j] = out.block[i][j];
+          workingBoard[i][j] = out.block[i][j];
         }
       }
     } catch {
-      return res.status(500).json({ error: 'Pre-solve failed' });
+      // Continue with distributed solving if pre-solve fails
     }
   }
-
-  currentBlueprintStore[jobId] = initialBlueprintStore[jobId].map(r => [...r]);
-  const subs = splitAndQueueJob(jobId, board, N);
+  
+  currentBlueprintStore[jobId] = workingBoard.map(r => [...r]);
+  const subs = splitAndQueueJob(jobId, workingBoard, N);
   jobSubJobCount[jobId] = subs.length;
   originalSubJobsStore[jobId] = subs;
   lastUpdateTimes[jobId] = Date.now();

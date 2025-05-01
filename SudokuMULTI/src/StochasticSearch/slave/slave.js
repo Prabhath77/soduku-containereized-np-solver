@@ -1,24 +1,28 @@
 // Worker file that connects to a master server to solve parts of Sudoku puzzles
 
 const axios = require('axios');
-const { StochasticBlockSolver } = require('./solver.js');
+const { StochasticBlockSolver } = require('../solver.js');
 
 // Server address - defaults to localhost if not provided
 const MASTER_URL = process.env.MASTER_URL || "http://localhost:3010";
 
 // Checks if a block has no empty cells (all filled with numbers)
 function isBlockSolved(block) {
-  return block.every(row => row.every(cell => cell !== 0));
+  for (let i = 0; i < block.length; i++) {
+    for (let j = 0; j < block[i].length; j++) {
+      if (block[i][j] === 0) return false;
+    }
+  }
+  return true;
 }
 
 // Asks the master server how many jobs are waiting to be solved
 async function fetchTotalJobs() {
   try {
     const response = await axios.get(`${MASTER_URL}/totalJobs`);
-    console.log(`Total jobs available: ${response.data.totalJobs}`);
     return response.data.totalJobs;
   } catch (error) {
-    console.error('Error fetching total jobs:', error.message);
+    console.error('Error checking job queue:', error.message);
     return 0;
   }
 }
@@ -26,21 +30,20 @@ async function fetchTotalJobs() {
 // Gets a Sudoku subproblem from the master server
 async function fetchJob() {
   try {
-    console.log(`Fetching job...`);
     const response = await axios.get(`${MASTER_URL}/queue`);
     return response.data;
   } catch (error) {
     if (error.response && error.response.status === 404) {
-      return null;
+      return null; // No jobs available
     }
-    console.error(`Error fetching job: ${error.message}`);
+    console.error('Error fetching job:', error.message);
     return null;
   }
 }
 
 // Takes a job and tries to solve the Sudoku block
 async function solveSubJob(job) {
-  const { id, board, blockRow, blockCol, originalBoard, triedNumbers, partialBoard } = job;
+  const { id, board, blockRow, blockCol, originalBoard, partialBoard, iteration } = job;
   const referenceBoard = partialBoard || originalBoard;
   
   console.log(`Processing job ${id} for block (${blockRow}, ${blockCol})`);
@@ -48,50 +51,68 @@ async function solveSubJob(job) {
   console.log('Reference board:', referenceBoard);
   
   try {
-    const startTime = Date.now();
-    const solver = new StochasticBlockSolver(referenceBoard, blockRow, blockCol);
-    const result = solver.solve();
-    const duration = (Date.now() - startTime) / 1000;
+    const startTime = process.hrtime();
     
-    if (result && isBlockSolved(result.block)) {
-      // Success - block is fully solved
-      console.log(`Job ${id} completed in ${duration}s`);
-      console.log('Solved block:', result.block);
-      console.log('Sure mask:', result.sure);
+    // Skip solving if the block is already fully filled
+    if (isBlockSolved(board)) {
+      console.log('Block is already solved, marking all cells as unsure');
+      // Create a sureMask where only the original values are marked as sure
+      const sureMask = Array(board.length).fill().map(() => Array(board[0].length).fill(false));
       
-      await axios.post(`${MASTER_URL}/result`, { 
-        id, 
-        board: result.block, 
-        blockRow, 
-        blockCol, 
-        triedNumbers, 
-        originalBoard: referenceBoard, 
-        sure: result.sure,
-        partialBoard: referenceBoard
+      await axios.post(`${MASTER_URL}/result`, {
+        id,
+        board,
+        blockRow,
+        blockCol,
+        sure: sureMask,
+        iteration
       });
       
-      console.log(`Result recorded for job ${id}`);
-      return true;
-    } else {
-      // Could not solve the block completely
-      console.log(`Job ${id} did not converge. Posting failure result.`);
-      
-      await axios.post(`${MASTER_URL}/result`, { 
-        id, 
-        board: result ? result.block : board, 
-        blockRow, 
-        blockCol, 
-        triedNumbers, 
-        originalBoard: referenceBoard, 
-        sure: result ? result.sure : [],
-        partialBoard: referenceBoard
-      });
-      
-      return false;
+      console.log('Result recorded for job', id);
+      return;
     }
+    
+    // Otherwise solve the block
+    const solver = new StochasticBlockSolver(referenceBoard, blockRow, blockCol, referenceBoard);
+    const result = solver.solve();
+    
+    // Log the solution time
+    const diff = process.hrtime(startTime);
+    const elapsedSeconds = (diff[0] + diff[1] / 1e9).toFixed(3);
+    console.log(`Job ${id} completed in ${elapsedSeconds}s`);
+    
+    // Validate the solution
+    console.log('Solved block:', result.block);
+    console.log('Sure mask:', result.sure);
+    
+    // Send the result back to the master
+    await axios.post(`${MASTER_URL}/result`, {
+      id,
+      board: result.block,
+      blockRow,
+      blockCol,
+      sure: result.sure,
+      iteration
+    });
+    
+    console.log('Result recorded for job', id);
   } catch (error) {
-    console.error(`Error solving job ${id}:`, error.message);
-    return false;
+    console.error(`Error solving job ${id}:`, error);
+    
+    // Send back the original block with all cells marked as unsure
+    try {
+      await axios.post(`${MASTER_URL}/result`, {
+        id,
+        board,
+        blockRow, 
+        blockCol,
+        sure: Array(board.length).fill().map(() => Array(board[0].length).fill(false)),
+        iteration
+      });
+      console.log('Error result recorded for job', id);
+    } catch (submitError) {
+      console.error('Failed to submit error result:', submitError.message);
+    }
   }
 }
 
@@ -99,23 +120,25 @@ async function solveSubJob(job) {
 async function fetchAndSolve() {
   try {
     const totalJobs = await fetchTotalJobs();
+    console.log('Total jobs available:', totalJobs);
     
-    if (totalJobs === 0) {
-      console.log('No jobs available. Retrying...');
-      setTimeout(fetchAndSolve, 1000);
-      return;
+    if (totalJobs > 0) {
+      console.log('Fetching job...');
+      const job = await fetchJob();
+      
+      if (job) {
+        await solveSubJob(job);
+      }
+    } else {
+      console.log('No jobs available, waiting...');
     }
     
-    const job = await fetchJob();
-    if (job) {
-      await solveSubJob(job);
-    }
+    // Wait a moment before looking for more jobs
+    setTimeout(fetchAndSolve, 1000);
   } catch (error) {
-    console.error('Error in slave worker:', error.message);
+    console.error('Error in fetch and solve loop:', error);
+    setTimeout(fetchAndSolve, 5000); // Wait longer before retry on error
   }
-  
-  // Wait a bit before looking for another job
-  setTimeout(fetchAndSolve, 1000);
 }
 
 console.log('Slave worker started.');

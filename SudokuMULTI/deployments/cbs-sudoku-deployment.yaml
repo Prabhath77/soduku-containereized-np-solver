@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: columnbased-master
-          image: prabhath77/m-cbsmy-sudoku-master:v13
+          image: prabhath77/m-cbsmy-sudoku-master:v14
           ports:
             - containerPort: 3005
 ---
@@ -45,7 +45,7 @@ metadata:
   labels:
     app: columnbased-slave
 spec:
-  replicas: 9
+  replicas: 4
   selector:
     matchLabels:
       app: columnbased-slave
@@ -56,7 +56,7 @@ spec:
     spec:
       containers:
         - name: columnbased-slave
-          image: prabhath77/m-cbsmy-sudoku-slave:v13
+          image: prabhath77/m-cbsmy-sudoku-slave:v14
           env:
             - name: MASTER_URL
               value: "http://columnbased-master-service:3005"

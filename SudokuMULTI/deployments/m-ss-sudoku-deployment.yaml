@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: stochasticsearch-master
-          image: prabhath77/m-ssmy-sudoku-master:v18
+          image: prabhath77/m-ssmy-sudoku-master:v31
           ports:
             - containerPort: 3010
 ---
@@ -45,7 +45,7 @@ metadata:
   labels:
     app: stochasticsearch-slave
 spec:
-  replicas: 9
+  replicas: 4
   selector:
     matchLabels:
       app: stochasticsearch-slave
@@ -56,7 +56,7 @@ spec:
     spec:
       containers:
         - name: stochasticsearch-slave
-          image: prabhath77/m-ssmy-sudoku-slave:v18
+          image: prabhath77/m-ssmy-sudoku-slave:v31
           env:
             - name: MASTER_URL 
               value: "http://stochasticsearch-master-service:3010"
