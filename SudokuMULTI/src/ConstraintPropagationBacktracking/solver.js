@@ -1,7 +1,3 @@
-/**
- * Enhanced Sudoku solver with advanced constraint propagation techniques
- * Optimized for distributed solving with the master-slave architecture
- */
 
 // Calculate the dimensions of each block in a Sudoku grid
 function getBlockDimensions(n) {
@@ -114,8 +110,6 @@ function createCandidateMap(board) {
   
   return candidateMap;
 }
-
-// ====== ADVANCED CONSTRAINT PROPAGATION TECHNIQUES ======
 
 // Find and apply naked singles
 function applyNakedSingles(board, candidateMap) {

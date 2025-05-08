@@ -1,6 +1,6 @@
 // Import libraries for HTTP requests and the Sudoku solver
 const axios = require('axios');
-const { StochasticBlockSolver } = require('/Users/harshsharma/Desktop/Sudoku/backup zips/SudokuMULTI 2/src/ConstraintPropagationBacktracking/solver.js');
+const { StochasticBlockSolver } = require('./solver.js');
 
 // Set the URL to connect to the master server
 const MASTER_URL = process.env.MASTER_URL || 'http://localhost:3000';

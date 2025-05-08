@@ -169,6 +169,7 @@ app.get('/queue', (req, res) => {
 });
 
 // /result endpoint: Accept the solved board from a slave.
+// /result endpoint: Accept the solved board from a slave.
 app.post('/result', (req, res) => {
   const { id, solvedBoard } = req.body;
   if (!id || !solvedBoard) {
@@ -179,6 +180,30 @@ app.post('/result', (req, res) => {
     delete pendingJobs[id];
   }
   
+  // Check if the solution is valid
+  if (!isValidGrid(solvedBoard)) {
+    console.log(`Job ${id} received invalid solution. Requeuing.`);
+    
+    // Get the partial board that already contains original values and naked singles
+    const partialBoard = currentBlueprints[id];
+    
+    // Create a new job with a new ID
+    const newJobId = `${id}-retry-${Date.now()}`;
+    const newJob = { 
+      id: newJobId, 
+      board: partialBoard,
+      partialBoard: partialBoard
+    };
+    
+    // Queue the new job
+    jobQueue.push(newJob);
+    currentBlueprints[newJobId] = partialBoard;
+    
+    console.log(`Requeued invalid solution as job ${newJobId}`);
+    return res.status(200).json({ id, status: 'invalid-requeued', newJobId });
+  }
+  
+  // Rest of the existing code for valid solutions
   if (!completedJobs[id]) {
     completedJobs[id] = [];
   }

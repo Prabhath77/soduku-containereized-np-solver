@@ -2,9 +2,9 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const cors = require('cors');
-const { getBlockDimensions, isValid, enhancedConstraintPropagation } = require('/Users/harshsharma/Desktop/Sudoku/backup zips/SudokuMULTI 2/src/ConstraintPropagationBacktracking/solver.js');
+const { getBlockDimensions, isValid, enhancedConstraintPropagation } = require('./solver.js');
 const { saveSolutionToFile } = require('./SaveSolution.js');
-const { StochasticBlockSolver } = require('/Users/harshsharma/Desktop/Sudoku/backup zips/SudokuMULTI 2/src/ConstraintPropagationBacktracking/solver.js');
+const { StochasticBlockSolver } = require('./solver.js');
 
 const app = express();
 const server = http.createServer(app);

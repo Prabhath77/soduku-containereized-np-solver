@@ -1,7 +1,7 @@
 // slave.js
 
 const axios = require('axios');
-const { solveSudoku } = require('./solver.js');
+const { solveSudoku } = require('/Users/harshsharma/Desktop/Sudoku/soduku-containereized-np-solver/SudokuSingle/src/BackTracking/solver.js');
 const os = require('os');
 const MASTER_URL = process.env.MASTER_URL || "http://localhost:3050";
 
