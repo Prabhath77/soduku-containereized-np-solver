@@ -1,5 +1,3 @@
-// master.js
-
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
@@ -222,8 +220,12 @@ app.get('/grid/:jobId', (req, res) => {
 app.get('/result/:jobId', (req, res) => {
   const { jobId } = req.params;
   const result = completedJobs[jobId];
-  if (result) {
-    res.status(200).json({ jobId, solvedBoards: result });
+  if (result && result.length > 0) {
+    // Return the format the frontend expects
+    res.status(200).json({ 
+      jobId, 
+      solvedBoard: result[0],  // Send first solution as solvedBoard
+    });
   } else {
     res.status(404).json({ error: 'Result not ready or invalid jobId.' });
   }

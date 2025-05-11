@@ -1,5 +1,3 @@
-// slave.js
-
 const axios = require('axios');
 const { SudokuSolver } = require('./solver');
 const os = require('os');

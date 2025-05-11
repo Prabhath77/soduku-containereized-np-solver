@@ -1,5 +1,3 @@
-// solver.js
-
 // Applies naked singles propagation: for each empty cell, if exactly one valid candidate exists, fill it in.
 function applyNakedSingles(board) {
   const n = board.length;

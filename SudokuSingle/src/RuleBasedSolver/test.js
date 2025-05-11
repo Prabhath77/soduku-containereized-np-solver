@@ -1,4 +1,3 @@
-// test25x25.js
 const axios = require('axios');
 
 // Load the grid from your JSON file. Make sure grid.json is in the same directory.

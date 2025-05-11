@@ -1,16 +1,7 @@
 // Worker that processes Sudoku columns received from the master server and sends back solutions
-
 const axios = require('axios');
 const { SudokuSolver } = require('./solver.js');
 const MASTER_URL = process.env.MASTER_URL || "http://localhost:3005";
-
-// Validates if a column is completely solved by checking that no cell contains zero
-function isColumnSolved(column) {
-  for (let i = 0; i < column.length; i++) {
-    if (column[i][0] === 0) return false;
-  }
-  return true;
-}
 
 // Retrieves the total number of available Sudoku jobs from the master server
 async function fetchTotalJobs() {

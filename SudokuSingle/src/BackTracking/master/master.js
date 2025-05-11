@@ -1,5 +1,3 @@
-// master.js
-
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
@@ -112,8 +110,6 @@ function isValidGrid(board) {
   return true;
 }
 
-// --- End Helper functions ---
-
 // Heartbeat endpoint.
 app.post('/heartbeat', (req, res) => {
   const { slaveId } = req.body;
@@ -169,7 +165,6 @@ app.get('/queue', (req, res) => {
 });
 
 // /result endpoint: Accept the solved board from a slave.
-// /result endpoint: Accept the solved board from a slave.
 app.post('/result', (req, res) => {
   const { id, solvedBoard } = req.body;
   if (!id || !solvedBoard) {
@@ -180,30 +175,6 @@ app.post('/result', (req, res) => {
     delete pendingJobs[id];
   }
   
-  // Check if the solution is valid
-  if (!isValidGrid(solvedBoard)) {
-    console.log(`Job ${id} received invalid solution. Requeuing.`);
-    
-    // Get the partial board that already contains original values and naked singles
-    const partialBoard = currentBlueprints[id];
-    
-    // Create a new job with a new ID
-    const newJobId = `${id}-retry-${Date.now()}`;
-    const newJob = { 
-      id: newJobId, 
-      board: partialBoard,
-      partialBoard: partialBoard
-    };
-    
-    // Queue the new job
-    jobQueue.push(newJob);
-    currentBlueprints[newJobId] = partialBoard;
-    
-    console.log(`Requeued invalid solution as job ${newJobId}`);
-    return res.status(200).json({ id, status: 'invalid-requeued', newJobId });
-  }
-  
-  // Rest of the existing code for valid solutions
   if (!completedJobs[id]) {
     completedJobs[id] = [];
   }
@@ -238,8 +209,12 @@ app.get('/grid/:jobId', (req, res) => {
 app.get('/result/:jobId', (req, res) => {
   const { jobId } = req.params;
   const result = completedJobs[jobId];
-  if (result) {
-    res.status(200).json({ jobId, solvedBoards: result });
+  if (result && result.length > 0) {
+    // Return the format the frontend expects
+    res.status(200).json({ 
+      jobId, 
+      solvedBoard: result[0],  // Send first solution as solvedBoard
+    });
   } else {
     res.status(404).json({ error: 'Result not ready or invalid jobId.' });
   }

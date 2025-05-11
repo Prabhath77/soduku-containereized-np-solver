@@ -3,7 +3,7 @@ const http = require('http');
 const path = require('path');
 const cors = require('cors');
 const { saveSolutionToFile } = require('./SaveSolution.js');
-const { SudokuSolver, enhancedConstraintPropagation } = require('/Users/harshsharma/Desktop/Sudoku/backup zips/SudokuMULTI 2/src/ColumnBasedSolver/solver.js');
+const { SudokuSolver, enhancedConstraintPropagation } = require('/solver.js');
 
 const app = express();
 const server = http.createServer(app);
@@ -114,54 +114,6 @@ function isValidSudoku(board) {
     }
   }
   return true;
-}
-
-// Pulls out a single column from the Sudoku board
-// We solve one column at a time to break down the problem
-function extractColumn(board, col) {
-  const gridSize = board.length;
-  const column = [];
-  for (let row = 0; row < gridSize; row++) {
-    column.push([board[row][col]]);
-  }
-  for (let col = 0; col < gridSize; col++) {
-    const column = [];
-    for (let row = 0; row < gridSize; row++) {
-      column.push([combinedBoard[row][col]]);
-    }
-    if (!isColumnValid(column, gridSize)) {
-      conflictingColumns.push(col);
-    }
-  }
-  return conflictingColumns;
-}
-
-// Adds problematic columns back to the job queue
-function requeueConflictingColumns(jobId, conflictingColumns) {
-  console.log(`[DEBUG] Requeuing conflicting columns for job ${jobId}:`, conflictingColumns);
-  const board = currentBlueprintStore[jobId];
-  const gridSize = board.length;
-  conflictingColumns.forEach(col => {
-    for (let row = 0; row < gridSize; row++) {
-      board[row][col] = 0;
-    }
-    if (completedJobs[jobId]) {
-      completedJobs[jobId] = completedJobs[jobId].filter(job => job.colIndex !== col);
-    }
-    if (!nextSubJobIndex[jobId]) {
-      nextSubJobIndex[jobId] = originalSubJobsStore[jobId].length + 1;
-    }
-    const subJobId = `${jobId}.${nextSubJobIndex[jobId]++}`;
-    const subColumn = extractColumn(board, col);
-    const subJob = { id: subJobId, board: subColumn, colIndex: col, originalBoard: board, triedNumbers: {} };
-    subJob.partialBoard = board.map(row => [...row]);
-    subJob.isRequeued = true;
-    jobQueue.push(subJob);
-    console.log(`[DEBUG] Requeued sub-job ${subJobId} for column ${col}`);
-  });
-  currentBlueprintStore[jobId] = board;
-  completedJobs[jobId] = [];
-  console.log(`[DEBUG] Cleared old completedJobs for job ${jobId} after requeue`);
 }
 
 // Updates the master board with confirmed values from partial solutions
@@ -384,15 +336,8 @@ function checkAndCombineResults() {
           delete lastUpdateTimes[jobId];
           delete nextSubJobIndex[jobId];
         } else {
-          console.log(`[DEBUG] Invalid combined solution for job ${jobId}, checking for conflicts`);
-          const conflicts = getConflictingColumns(combinedBoard);
-          console.log(`[DEBUG] Found ${conflicts.length} conflicting columns for job ${jobId}`);
-          
-          if (conflicts.length > 0) {
-            requeueConflictingColumns(jobId, conflicts);
-          } else {
-            requeueJobs(jobId);
-          }
+          console.log(`[DEBUG] Invalid combined solution for job ${jobId}, requeuing`);
+          requeueJobs(jobId);
         }
       } catch (e) {
         console.error(`[ERROR] Combining failed for job ${jobId}:`, e);

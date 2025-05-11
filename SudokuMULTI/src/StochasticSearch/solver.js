@@ -67,43 +67,6 @@ function getCandidates(board, row, col) {
 }
 
 // Apply only naked singles constraint propagation
-function enhancedConstraintPropagation(board) {
-  const n = board.length;
-  const MAX_ITERATIONS = 100;
-  
-  // Create a deep copy of the board to work with
-  const workingBoard = board.map(row => [...row]);
-  
-  let changed = true;
-  let iterations = 0;
-  
-  while (changed && iterations < MAX_ITERATIONS) {
-    changed = false;
-    iterations++;
-    
-    // Apply naked singles technique only
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        if (workingBoard[i][j] === 0) {
-          const candidates = getCandidates(workingBoard, i, j);
-          if (candidates.length === 1) {
-            workingBoard[i][j] = candidates[0];
-            changed = true;
-          }
-        }
-      }
-    }
-  }
-  
-  // Update the original board with our changes
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      board[i][j] = workingBoard[i][j];
-    }
-  }
-  
-  return board;
-}
 
 // Solver class that uses randomized search techniques with naked singles only
 class OptimizedStochasticBlockSolver {
@@ -437,7 +400,6 @@ class OptimizedStochasticBlockSolver {
 
 module.exports = {
   getBlockDimensions,
-  isConsistent,
-  enhancedConstraintPropagation,
+  getCandidates,
   StochasticBlockSolver: OptimizedStochasticBlockSolver
 };

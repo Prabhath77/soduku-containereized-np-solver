@@ -1,109 +1,65 @@
+// Required modules for the server
 const express = require('express');
 const http = require('http');
 const path = require('path');
 const cors = require('cors');
-const { getBlockDimensions } = require('../solver.js');
+// Import solver functions from external module
+const { getBlockDimensions, getCandidates, StochasticBlockSolver } = require('./solver.js');
 const { saveSolutionToFile } = require('./SaveSolution.js');
-const { StochasticBlockSolver } = require('../solver.js');
 
+// Express server setup
 const app = express();
 const server = http.createServer(app);
-
 const PORT = 3010;
 
-// Main storage for tracking all Sudoku solving jobs
-const jobQueue = [];
-const completedJobs = {};          
-const jobSubJobCount = {};         
-const originalSubJobsStore = {};    
-const jobStartTimes = {};          
-const lastUpdateTimes = {};        
-const currentBlueprintStore = {};  
-const initialBlueprintStore = {};  
-const iterationCounts = {};        // Track iteration number for each job
-const finalSolvedResults = {};
+// Job management data structures
+const jobQueue = [];               // Queue of pending jobs to be processed
+const completedJobs = {};          // Store completed sub-jobs by parent job ID
+const jobSubJobCount = {};         // Track number of sub-jobs per parent job
+const originalSubJobsStore = {};   // Keep original sub-job information for reference
+const jobStartTimes = {};          // Track when jobs were started for timeout purposes
+const lastUpdateTimes = {};        // Track last activity for each job to detect stalls
+const currentBlueprintStore = {};  // Current state of each Sudoku puzzle being solved
+const initialBlueprintStore = {};  // Original state of each puzzle for reference
+const iterationCounts = {};        // Track solving iterations for each puzzle
+const finalSolvedResults = {};     // Completed puzzles ready for client retrieval
 
+// Middleware setup
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
-// Print formatted debug information
+// Debug logging helper function
 function debugLog(prefix, data) {
   console.log(`[DEBUG] ${prefix}:`, JSON.stringify(data, null, 2));
 }
 
-// Check if a value is valid at a given position
-function isConsistent(board, row, col, value) {
-  const n = board.length;
-  
-  // Check row
-  for (let i = 0; i < n; i++) {
-    if (board[row][i] === value) {
-      return false;
-    }
-  }
-  
-  // Check column
-  for (let i = 0; i < n; i++) {
-    if (board[i][col] === value) {
-      return false;
-    }
-  }
-  
-  // Check block
-  const [blockRows, blockCols] = getBlockDimensions(n);
-  const blockRowStart = Math.floor(row / blockRows) * blockRows;
-  const blockColStart = Math.floor(col / blockCols) * blockCols;
-  
-  for (let i = 0; i < blockRows; i++) {
-    for (let j = 0; j < blockCols; j++) {
-      if (board[blockRowStart + i][blockColStart + j] === value) {
-        return false;
-      }
-    }
-  }
-  
-  return true;
-}
-
-// Get valid candidates for a cell
-function getCandidates(board, row, col) {
-  if (board[row][col] !== 0) {
-    return [];
-  }
-  
-  const n = board.length;
-  const candidates = [];
-  
-  for (let num = 1; num <= n; num++) {
-    if (isConsistent(board, row, col, num)) {
-      candidates.push(num);
-    }
-  }
-  
-  return candidates;
-}
-
-// Apply naked singles constraint propagation
+// Apply naked singles technique (when a cell has only one possible value)
 function applyNakedSingles(board) {
   const n = board.length;
   const workingBoard = board.map(row => [...row]);
   
   let changed = true;
   let iterations = 0;
-  const MAX_ITERATIONS = 100; // Limit iterations to prevent infinite loops
+  const MAX_ITERATIONS = 100; // Prevent infinite loops
   
+  // Continue until no more changes or max iterations reached
   while (changed && iterations < MAX_ITERATIONS) {
     changed = false;
     iterations++;
     
+    // Check each cell in the grid
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < n; j++) {
         if (workingBoard[i][j] === 0) {
+          // Find valid candidates for this empty cell
           const candidates = getCandidates(workingBoard, i, j);
+          console.log(`Cell (${i},${j}) has ${candidates.length} candidates: ${candidates}`);
+          // If only one candidate, it must be the value for this cell
           if (candidates.length === 1) {
             workingBoard[i][j] = candidates[0];
             changed = true;
+            console.log(`Applied naked single at (${i},${j}): ${candidates[0]}`);
           }
         }
       }
@@ -121,35 +77,18 @@ function applyNakedSingles(board) {
   return board;
 }
 
-// Check if board is completely empty
+// Check if a board is completely empty (all zeros)
 function isEmptyBoard(board) {
   return board.every(row => row.every(cell => cell === 0));
 }
 
-// Check if all numbers in a block follow Sudoku rules
-function isBlockValid(subGrid, fullSize) {
-  const expectedSet = new Set();
-  for (let d = 1; d <= fullSize; d++) {
-    expectedSet.add(d);
-  }
-  const blockNumbers = subGrid.flat();
-  if (blockNumbers.includes(0)) return false;
-  if (blockNumbers.length !== fullSize) return false;
-  const blockSet = new Set(blockNumbers);
-  if (blockSet.size !== expectedSet.size) return false;
-  for (const num of expectedSet) {
-    if (!blockSet.has(num)) return false;
-  }
-  return true;
-}
-
-// Identify blocks that have conflicting values
+// Identify blocks with conflicting values in rows or columns
 function getConflictingBlocks(combinedBoard) {
   const gridSize = combinedBoard.length;
   const [blockRows, blockCols] = getBlockDimensions(gridSize);
   const conflictSet = new Set();
 
-  // Check row conflicts
+  // Look for row conflicts (same value in the same row)
   for (let i = 0; i < gridSize; i++) {
     const seen = {};
     for (let j = 0; j < gridSize; j++) {
@@ -157,7 +96,7 @@ function getConflictingBlocks(combinedBoard) {
       if (value === 0) continue;
       
       if (seen[value]) {
-        // Found duplicate in row - mark both blocks as conflicting
+        // Found duplicate value in row, mark both containing blocks as conflicting
         const firstBlockCol = Math.floor(seen[value] / blockCols);
         const secondBlockCol = Math.floor(j / blockCols);
         const blockRow = Math.floor(i / blockRows);
@@ -170,7 +109,7 @@ function getConflictingBlocks(combinedBoard) {
     }
   }
 
-  // Check column conflicts
+  // Look for column conflicts (same value in the same column)
   for (let j = 0; j < gridSize; j++) {
     const seen = {};
     for (let i = 0; i < gridSize; i++) {
@@ -178,7 +117,7 @@ function getConflictingBlocks(combinedBoard) {
       if (value === 0) continue;
       
       if (seen[value]) {
-        // Found duplicate in column - mark both blocks as conflicting
+        // Found duplicate value in column, mark both containing blocks as conflicting
         const firstBlockRow = Math.floor(seen[value] / blockRows);
         const secondBlockRow = Math.floor(i / blockRows);
         const blockCol = Math.floor(j / blockCols);
@@ -191,7 +130,7 @@ function getConflictingBlocks(combinedBoard) {
     }
   }
 
-  // Convert to array of conflict objects
+  // Convert set of conflict coordinates into array of conflict objects
   const conflicts = [];
   for (const coord of conflictSet) {
     const [blockRow, blockCol] = coord.split(',').map(Number);
@@ -201,12 +140,13 @@ function getConflictingBlocks(combinedBoard) {
   return conflicts;
 }
 
-// Extract a single block from the full board
+// Extract a specific block from the full Sudoku board
 function extractBlock(board, blockRow, blockCol) {
   const n = board.length;
   const [blockRows, blockCols] = getBlockDimensions(n);
   const block = [];
   
+  // Copy block cells into a new 2D array
   for (let i = 0; i < blockRows; i++) {
     const row = [];
     for (let j = 0; j < blockCols; j++) {
@@ -218,7 +158,7 @@ function extractBlock(board, blockRow, blockCol) {
   return block;
 }
 
-// Split a Sudoku board into smaller blocks and queue them as jobs
+// Split a Sudoku puzzle into blocks for distributed solving
 function splitAndQueueJob(jobId, board, gridSize, isRequeued = false) {
   console.log(`[DEBUG] Splitting board for job ${jobId}`);
   const [blockRows, blockCols] = getBlockDimensions(gridSize);
@@ -226,10 +166,8 @@ function splitAndQueueJob(jobId, board, gridSize, isRequeued = false) {
   const numBlockCols = gridSize / blockCols;
   const subJobs = [];
   
-  // Reset counters for new iteration
   let subJobCounter = 1;
-  
-  // Increment iteration count
+  // Track solving iterations to manage progressive refinement
   if (isRequeued) {
     iterationCounts[jobId] = (iterationCounts[jobId] || 0) + 1;
     console.log(`[DEBUG] Starting iteration ${iterationCounts[jobId]} for job ${jobId}`);
@@ -237,15 +175,16 @@ function splitAndQueueJob(jobId, board, gridSize, isRequeued = false) {
     iterationCounts[jobId] = 1;
   }
   
+  // Create sub-jobs for each unsolved block
   for (let blockRow = 0; blockRow < numBlockRows; blockRow++) {
     for (let blockCol = 0; blockCol < numBlockCols; blockCol++) {
-      // Extract this block from the board
+      // Get this specific block
       const block = extractBlock(board, blockRow, blockCol);
       
-      // Skip if block is already solved (no 0s)
+      // Skip blocks that are already completely solved
       if (block.flat().every(cell => cell !== 0)) continue;
       
-      // Create a sub-job for this block
+      // Create a unique ID for this sub-job
       const subJobId = `${jobId}.${subJobCounter++}`;
       const subJob = { 
         id: subJobId, 
@@ -256,6 +195,7 @@ function splitAndQueueJob(jobId, board, gridSize, isRequeued = false) {
         iteration: iterationCounts[jobId]
       };
       
+      // For requeued jobs, include current partial solution
       if (isRequeued) {
         subJob.isRequeued = true;
         subJob.partialBoard = board.map(row => [...row]);
@@ -266,7 +206,7 @@ function splitAndQueueJob(jobId, board, gridSize, isRequeued = false) {
     }
   }
   
-  // Update job count for this iteration
+  // Record how many sub-jobs were created for this job
   jobSubJobCount[jobId] = subJobs.length;
   
   console.log(`[DEBUG] Created ${subJobs.length} sub-jobs for job ${jobId} (iteration ${iterationCounts[jobId]})`);
@@ -274,7 +214,7 @@ function splitAndQueueJob(jobId, board, gridSize, isRequeued = false) {
   return subJobs;
 }
 
-// Update the main board with cells that we're confident about
+// Update the global board state with "sure" values from completed jobs
 function updatePartialBoardFromSure(parentId) {
   const blueprint = initialBlueprintStore[parentId];
   if (!blueprint) {
@@ -286,7 +226,7 @@ function updatePartialBoardFromSure(parentId) {
   const [blockRows, blockCols] = getBlockDimensions(n);
   let updatedBoard = Array(n).fill().map(() => Array(n).fill(0));
   
-  // Start with fixed original values
+  // Start with original fixed values from the puzzle
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
       if (blueprint[i][j] !== 0) {
@@ -295,10 +235,11 @@ function updatePartialBoardFromSure(parentId) {
     }
   }
   
-  // Add all values we're sure about from completed sub-jobs of the current iteration
+  // Add "sure" values from completed jobs in the current iteration
   const currentIteration = iterationCounts[parentId] || 1;
   const currentResults = (completedJobs[parentId] || []).filter(job => job.iteration === currentIteration);
   
+  // Apply high-confidence values from solved blocks
   currentResults.forEach(result => {
     const { blockRow, blockCol, board, sure } = result;
     const startRow = blockRow * blockRows;
@@ -313,49 +254,45 @@ function updatePartialBoardFromSure(parentId) {
     }
   });
   
-  // Apply naked singles propagation
+  // Apply constraint propagation to infer additional values
   applyNakedSingles(updatedBoard);
   
+  // Store updated board for this job
   currentBlueprintStore[parentId] = updatedBoard;
   
   debugLog("Updated partial blueprint", updatedBoard);
 }
 
-// Reprocess blocks with conflicts
+// Requeue specific blocks that have conflicts for re-solving
 function requeueConflictingBlocks(parentId, conflictingBlocks) {
-  // Improved logging with detailed block information
   console.log(`[DEBUG] Requeuing ${conflictingBlocks.length} conflicting blocks for job ${parentId}: ${conflictingBlocks.map(c => `(${c.blockRow},${c.blockCol})`).join(', ')}`);
   
-  // Make sure we have an updated blueprint
+  // Update board with current "sure" values before requeuing
   updatePartialBoardFromSure(parentId);
   
-  // Get current blueprint state
   const blueprint = currentBlueprintStore[parentId];
   
-  // Create a batch of jobs to add atomically
   const newJobs = [];
   
-  // Remove conflicting blocks from completed jobs first
+  // Remove conflicting jobs from completed list to replace them
   completedJobs[parentId] = (completedJobs[parentId] || []).filter(job => 
     !conflictingBlocks.some(block => 
       block.blockRow === job.blockRow && block.blockCol === job.blockCol
     )
   );
   
-  // Increment iteration count
+  // Start new iteration for progressive refinement
   iterationCounts[parentId] = (iterationCounts[parentId] || 0) + 1;
   const newIteration = iterationCounts[parentId];
   console.log(`[DEBUG] Starting iteration ${newIteration} for job ${parentId} with conflicting blocks`);
   
-  // Reset counter for sub-jobs in this new iteration
   let subJobCounter = 1;
   
-  // Prepare all jobs before adding them to the queue
+  // Create new jobs for the blocks with conflicts
   conflictingBlocks.forEach(({ blockRow, blockCol }) => {
     const block = extractBlock(blueprint, blockRow, blockCol);
     const id = `${parentId}.${subJobCounter++}`;
     
-    // Create complete job object with all necessary fields
     const job = {
       id, 
       board: block, 
@@ -373,42 +310,42 @@ function requeueConflictingBlocks(parentId, conflictingBlocks) {
   // Update job count for this iteration
   jobSubJobCount[parentId] = newJobs.length;
   
-  // Add all jobs to the queue at once (atomic operation)
+  // Add all new jobs to the queue at once
   jobQueue.push(...newJobs);
   
-  // Only update timestamp when ALL jobs are queued
+  // Update timestamp to prevent timeout
   lastUpdateTimes[parentId] = Date.now();
   
   console.log(`[DEBUG] Successfully added ${newJobs.length} jobs for iteration ${newIteration}`);
 }
 
-// Restart the solving process for all parts of a puzzle
+// Requeue all blocks for a job (full restart with current knowledge)
 function requeueJobs(parentId) {
   console.log(`[DEBUG] Requeuing all blocks for job ${parentId} (full restart)`);
   
-  // First update the blueprint with confirmed values
+  // First get confident values from existing solutions
   updatePartialBoardFromSure(parentId);
   
-  // Clear pending jobs for this puzzle
+  // Clear pending jobs for this parent
   for (let i = jobQueue.length - 1; i >= 0; i--) {
     if (jobQueue[i].id.startsWith(parentId + '.')) {
       jobQueue.splice(i, 1);
     }
   }
   
-  // Reset completed jobs for new iteration counting
+  // Reset completed jobs for a fresh iteration
   completedJobs[parentId] = [];
   
-  // Create fresh sub-jobs based on current state
+  // Get current blueprint and create new jobs
   const blueprint = currentBlueprintStore[parentId];
   const n = blueprint.length;
   originalSubJobsStore[parentId] = splitAndQueueJob(parentId, blueprint, n, true);
   
-  // Update timestamps
+  // Update timestamp to prevent timeout
   lastUpdateTimes[parentId] = Date.now();
 }
 
-// Merge all solved blocks into one complete board
+// Combine individual block solutions into a complete board
 function combineSections(parentId) {
   console.log(`[DEBUG] Combining sections for job ${parentId}`);
   
@@ -421,13 +358,13 @@ function combineSections(parentId) {
   const [blockRows, blockCols] = getBlockDimensions(n);
   const combined = blueprint.map(row => [...row]);
   
-  // Only use results from the current iteration
+  // Only use results from current iteration to avoid mixing inconsistent solutions
   const currentIteration = iterationCounts[parentId];
   const currentResults = (completedJobs[parentId] || []).filter(job => job.iteration === currentIteration);
   
   console.log(`[DEBUG] Using ${currentResults.length} results from iteration ${currentIteration}`);
   
-  // Fill in values from completed blocks
+  // Merge solutions into the combined board, prioritizing "sure" values
   currentResults.forEach(result => {
     const { blockRow, blockCol, board, sure } = result;
     const startRow = blockRow * blockRows;
@@ -435,11 +372,11 @@ function combineSections(parentId) {
     
     for (let i = 0; i < blockRows; i++) {
       for (let j = 0; j < blockCols; j++) {
-        // Only use values we're sure about or fill in with proposed solutions if needed
         if (sure && sure[i][j]) {
+          // High-confidence values take priority
           combined[startRow + i][startCol + j] = board[i][j];
         } else if (combined[startRow + i][startCol + j] === 0) {
-          // Use uncertain values only if we don't have anything better
+          // Fall back to uncertain values if needed
           combined[startRow + i][startCol + j] = board[i][j];
         }
       }
@@ -449,20 +386,20 @@ function combineSections(parentId) {
   return combined;
 }
 
-// Verify if a completed Sudoku board follows all the rules
+// Validate a complete Sudoku solution
 function isValidSudoku(board) {
   if (!board) return false;
   
   const n = board.length;
   
-  // Check for incomplete cells
+  // Check for any remaining empty cells
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
       if (board[i][j] === 0) return false;
     }
   }
   
-  // Check rows
+  // Check rows for duplicates
   for (let i = 0; i < n; i++) {
     const rowSet = new Set();
     for (let j = 0; j < n; j++) {
@@ -471,7 +408,7 @@ function isValidSudoku(board) {
     }
   }
   
-  // Check columns
+  // Check columns for duplicates
   for (let j = 0; j < n; j++) {
     const colSet = new Set();
     for (let i = 0; i < n; i++) {
@@ -480,7 +417,7 @@ function isValidSudoku(board) {
     }
   }
   
-  // Check blocks
+  // Check each block for duplicates
   const [blockRows, blockCols] = getBlockDimensions(n);
   for (let blockRow = 0; blockRow < n/blockRows; blockRow++) {
     for (let blockCol = 0; blockCol < n/blockCols; blockCol++) {
@@ -498,10 +435,11 @@ function isValidSudoku(board) {
   return true;
 }
 
-// Periodically check progress and combine partial results
+// Regularly check if jobs are complete or need adjustment
 function checkAndCombineResults() {
   const now = Date.now();
   
+  // Check each active job
   Object.keys(originalSubJobsStore).forEach(jobId => {
     const currentIteration = iterationCounts[jobId] || 1;
     const currentResults = (completedJobs[jobId] || []).filter(job => job.iteration === currentIteration);
@@ -509,17 +447,18 @@ function checkAndCombineResults() {
     const actual = currentResults.length;
     
     if (actual > 0) {
-      // Update the blueprint with any newly confirmed values
+      // Update with confirmed values when there's new data
       updatePartialBoardFromSure(jobId);
     }
     
-    // If all subjobs for the current iteration are complete, try to combine into full solution
+    // Check if all sub-jobs for this iteration are completed
     if (expected > 0 && actual >= expected) {
       console.log(`[DEBUG] All results (${actual}/${expected}) received for job ${jobId} iteration ${currentIteration}, combining...`);
       
-      // Check if we already have a valid solution directly from constraint propagation
+      // Try constraint propagation solution first (may be simpler)
       const blueprint = currentBlueprintStore[jobId];
       if (blueprint.flat().every(cell => cell !== 0) && isValidSudoku(blueprint)) {
+        // Solution found through constraint propagation
         finalSolvedResults[jobId] = { 
           board: blueprint,
           timestamp: now 
@@ -527,7 +466,7 @@ function checkAndCombineResults() {
         saveSolutionToFile(jobId, blueprint);
         console.log(`[DEBUG] Job ${jobId} completed through constraint propagation`);
         
-        // Clean up resources
+        // Clean up completed job data
         delete originalSubJobsStore[jobId];
         delete completedJobs[jobId];
         delete currentBlueprintStore[jobId];
@@ -538,12 +477,12 @@ function checkAndCombineResults() {
         return;
       }
       
-      // Otherwise try to combine all block solutions
+      // Try combining all block solutions
       try {
         const combinedBoard = combineSections(jobId);
         
         if (isValidSudoku(combinedBoard)) {
-          // Success! We have a valid solution
+          // Valid solution found by combining blocks
           finalSolvedResults[jobId] = { 
             board: combinedBoard,
             timestamp: now 
@@ -551,7 +490,7 @@ function checkAndCombineResults() {
           saveSolutionToFile(jobId, combinedBoard);
           console.log(`[DEBUG] Valid combined solution found for job ${jobId} at iteration ${currentIteration}`);
           
-          // Clean up resources
+          // Clean up completed job data
           delete originalSubJobsStore[jobId];
           delete completedJobs[jobId];
           delete currentBlueprintStore[jobId];
@@ -560,15 +499,16 @@ function checkAndCombineResults() {
           delete lastUpdateTimes[jobId];
           delete iterationCounts[jobId];
         } else {
-          // Found some conflicts, requeue problematic blocks
+          // Conflicts detected, try again with refined approach
           console.log(`[DEBUG] Invalid combined solution for job ${jobId}, checking for conflicts`);
           const conflictingBlocks = getConflictingBlocks(combinedBoard);
           
           if (conflictingBlocks.length > 0) {
+            // Only retry the specific blocks causing conflicts
             console.log(`[DEBUG] Found ${conflictingBlocks.length} conflicting blocks`);
             requeueConflictingBlocks(jobId, conflictingBlocks);
           } else {
-            // No specific conflicts found but solution is invalid, restart everything
+            // If can't identify specific conflicts, restart everything
             requeueJobs(jobId);
           }
         }
@@ -577,17 +517,17 @@ function checkAndCombineResults() {
         requeueJobs(jobId);
       }
     } else if (expected > 0 && now - (lastUpdateTimes[jobId] || 0) > 120000) {
-      // If no progress for 2 minutes, restart
+      // Requeue if job appears to be stalled (no updates for 2 minutes)
       console.log(`[DEBUG] Job ${jobId} stalled (${actual}/${expected}) in iteration ${currentIteration}, requeuing all blocks`);
       requeueJobs(jobId);
     }
   });
   
-  // Check again after 1 second
+  // Schedule next check
   setTimeout(checkAndCombineResults, 1000);
 }
 
-// API to get solved results for a specific job
+// API route to retrieve final results of a job
 app.get('/FinalsolvedResults', (req, res) => {
   const { jobId } = req.query;
   console.log(`[DEBUG] Checking results for job ${jobId}`);
@@ -596,6 +536,7 @@ app.get('/FinalsolvedResults', (req, res) => {
     return res.status(400).json({ error: 'Missing jobId parameter' });
   }
   
+  // Return completed solution if available
   if (finalSolvedResults[jobId]) {
     return res.status(200).json({ 
       jobId, 
@@ -604,7 +545,7 @@ app.get('/FinalsolvedResults', (req, res) => {
     });
   }
   
-  // Check if we have a current state that might be solved
+  // Check if current state is already a valid solution
   const current = currentBlueprintStore[jobId];
   if (current && isValidSudoku(current)) {
     finalSolvedResults[jobId] = { 
@@ -618,7 +559,7 @@ app.get('/FinalsolvedResults', (req, res) => {
     });
   }
   
-  // Return progress information
+  // Return progress information if job is still processing
   if (current) {
     const filled = current.flat().filter(cell => cell !== 0).length;
     const total = current.length * current.length;
@@ -633,7 +574,7 @@ app.get('/FinalsolvedResults', (req, res) => {
   return res.status(404).json({ error: 'Job not found or not yet started' });
 });
 
-// Process new Sudoku puzzle submission
+// API endpoint to submit a new Sudoku solving job
 app.post('/solve', (req, res) => {
   const { board } = req.body;
   
@@ -644,17 +585,18 @@ app.post('/solve', (req, res) => {
   const gridSize = board.length;
   const jobId = Date.now().toString();
   
+  // Initialize job tracking data
   jobStartTimes[jobId] = Date.now();
   initialBlueprintStore[jobId] = board.map(row => [...row]);
   iterationCounts[jobId] = 1;
   
-  // Create a working copy of the board
+  // Work with a copy of the board
   const workingBoard = board.map(row => [...row]);
   
-  // Apply ONLY naked singles constraint propagation
+  // Try constraint propagation first as it's fastest
   applyNakedSingles(workingBoard);
   
-  // Check if the board is already solved by constraint propagation alone
+  // Check if already solved by simple techniques
   if (workingBoard.flat().every(cell => cell !== 0) && isValidSudoku(workingBoard)) {
     finalSolvedResults[jobId] = { 
       board: workingBoard, 
@@ -669,32 +611,32 @@ app.post('/solve', (req, res) => {
     });
   }
   
-  // Handle completely empty boards
+  // Special case for completely empty boards - seed with one solved block
   if (isEmptyBoard(workingBoard)) {
     const [blockRows, blockCols] = getBlockDimensions(gridSize);
     try {
-      // Pre-solve the first block to provide a starting point
+      // Initialize with one solved block to bootstrap the process
       const solver = new StochasticBlockSolver(workingBoard, 0, 0);
       const result = solver.solve();
       
-      // Update the board with the first block solution
+      // Set first block with a valid solution
       for (let i = 0; i < blockRows; i++) {
         for (let j = 0; j < blockCols; j++) {
           workingBoard[i][j] = result.block[i][j];
         }
       }
       
-      // Apply naked singles again
+      // Propagate constraints from this seed block
       applyNakedSingles(workingBoard);
     } catch (e) {
       console.error('[ERROR] Failed to pre-solve first block:', e);
     }
   }
   
-  // Store current board state
+  // Store current state
   currentBlueprintStore[jobId] = workingBoard;
   
-  // Split the puzzle into blocks and queue them
+  // Split puzzle into blocks and queue for distributed solving
   const subJobs = splitAndQueueJob(jobId, workingBoard, gridSize);
   jobSubJobCount[jobId] = subJobs.length;
   originalSubJobsStore[jobId] = subJobs;
@@ -708,12 +650,12 @@ app.post('/solve', (req, res) => {
   });
 });
 
-// Get number of jobs waiting in the queue
+// API endpoint to check job queue status
 app.get('/totalJobs', (req, res) => {
   res.status(200).json({ totalJobs: jobQueue.length });
 });
 
-// Assign a job to a worker
+// API endpoint for workers to get next job
 app.get('/queue', (req, res) => {
   const job = jobQueue.shift();
   
@@ -723,7 +665,7 @@ app.get('/queue', (req, res) => {
   
   const jobId = job.id.split('.')[0];
   
-  // For requeued jobs, provide the latest board state
+  // Provide latest global board state for context in requeued jobs
   if (job.isRequeued && currentBlueprintStore[jobId]) {
     job.partialBoard = currentBlueprintStore[jobId];
   }
@@ -731,7 +673,7 @@ app.get('/queue', (req, res) => {
   return res.status(200).json(job);
 });
 
-// Process results from workers
+// API endpoint for workers to submit results
 app.post('/result', (req, res) => {
   const { id, board, blockRow, blockCol, sure, iteration } = req.body;
   const jobId = id.split('.')[0];
@@ -742,7 +684,7 @@ app.post('/result', (req, res) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
   
-  // Store the result with iteration tracking
+  // Store with iteration info for progressive refinement
   completedJobs[jobId] = completedJobs[jobId] || [];
   completedJobs[jobId].push({ 
     id, 
@@ -753,13 +695,13 @@ app.post('/result', (req, res) => {
     iteration: iteration || 1 
   });
   
-  // Update last activity timestamp
+  // Track last activity to detect stalled jobs
   lastUpdateTimes[jobId] = Date.now();
   
-  // Update partial blueprint with confirmed values
+  // Update shared state with new results
   updatePartialBoardFromSure(jobId);
   
-  // Log progress
+  // Log progress for monitoring
   const currentIteration = iterationCounts[jobId] || 1;
   const currentResults = completedJobs[jobId].filter(job => job.iteration === currentIteration);
   const expected = jobSubJobCount[jobId] || 0;
@@ -769,9 +711,10 @@ app.post('/result', (req, res) => {
   return res.json({ status: 'received' });
 });
 
-// Start the result checking process
+// Start the periodic result checker
 checkAndCombineResults();
 
+// Start the server
 server.listen(PORT, () => {
   console.log(`StochasticSearch master server running on port ${PORT}`);
 });

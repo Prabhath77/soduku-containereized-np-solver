@@ -1,4 +1,3 @@
-
 // Calculate the dimensions of each block in a Sudoku grid
 function getBlockDimensions(n) {
   const root = Math.sqrt(n);
@@ -1032,5 +1031,5 @@ module.exports = {
   getBlockDimensions,
   isValid,
   enhancedConstraintPropagation,
-  StochasticBlockSolver: SudokuBlockSolver
+  SudokuBlockSolver
 };

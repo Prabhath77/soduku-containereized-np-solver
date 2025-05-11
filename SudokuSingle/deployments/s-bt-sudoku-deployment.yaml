@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: backtracking-single-combined
-        image: prabhath77/s-btmy-sudoku-solver:v2
+        image: prabhath77/s-btmy-sudoku-solver:v4
         ports:
         - containerPort: 3050
 ---

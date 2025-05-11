@@ -1,5 +1,3 @@
-// solver.js
-
 class SudokuSolver {
   constructor() {
     this.MAX_ATTEMPTS = 50;
@@ -88,7 +86,7 @@ class SudokuSolver {
     return board;
   }
 
-  energy(board, fixedCells) {
+  energy(board) {
     let conflicts = 0;
     const n = board.length;
     const blockSize = Math.sqrt(n);

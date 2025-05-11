@@ -1,5 +1,3 @@
-// solver.js
-
 // Checks if placing num at (row, col) is valid.
 function isValid(board, row, col, num) {
   const n = board.length;

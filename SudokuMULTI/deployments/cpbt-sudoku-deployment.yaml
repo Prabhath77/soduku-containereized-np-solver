@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: master
-        image: prabhath77/m-cpbtmy-sudoku-master:v30
+        image: prabhath77/m-cpbtmy-sudoku-master:v31
         ports:
         - containerPort: 3000
 ---
@@ -45,7 +45,7 @@ metadata:
   labels:
     app: slave
 spec:
-  replicas: 4
+  replicas: 8
   selector:
     matchLabels:
       app: slave
@@ -56,7 +56,7 @@ spec:
     spec:
       containers:
       - name: slave
-        image: prabhath77/m-cpbtmy-sudoku-slave:v30
+        image: prabhath77/m-cpbtmy-sudoku-slave:v31
         env:
         - name: MASTER_URL
           value: "http://master-service:3000"

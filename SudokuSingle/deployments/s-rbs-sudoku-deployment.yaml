@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: rulebased-single-combined
-        image: prabhath77/s-rbsmy-sudoku-solver:v1
+        image: prabhath77/s-rbsmy-sudoku-solver:v2
         ports:
         - containerPort: 3060
 ---

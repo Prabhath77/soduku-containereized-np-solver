@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: stochasticsearch-single-combined
-        image: prabhath77/s-ssmy-sudoku-solver:v1
+        image: prabhath77/s-ssmy-sudoku-solver:v5
         ports:
         - containerPort: 3070
 ---

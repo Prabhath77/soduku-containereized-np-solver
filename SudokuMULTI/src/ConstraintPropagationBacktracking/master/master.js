@@ -2,9 +2,8 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const cors = require('cors');
-const { getBlockDimensions, isValid, enhancedConstraintPropagation } = require('./solver.js');
+const { getBlockDimensions, isValid, enhancedConstraintPropagation, SudokuBlockSolver } = require('./solver.js');
 const { saveSolutionToFile } = require('./SaveSolution.js');
-const { StochasticBlockSolver } = require('./solver.js');
 
 const app = express();
 const server = http.createServer(app);
@@ -346,7 +345,7 @@ app.post('/solve', (req, res) => {
   // Handle completely empty boards with direct solver
   if (board.flat().every(v => v === 0)) {
     try {
-      const solver = new StochasticBlockSolver(board, 0, 0);
+      const solver = new SudokuBlockSolver(board, 0, 0);
       const out = solver.solve();
       const [rSize, cSize] = getBlockDimensions(N);
       for (let i = 0; i < rSize; i++) {

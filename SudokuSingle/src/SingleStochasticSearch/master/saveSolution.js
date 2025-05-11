@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const solutionsDir = '/home/parallels/Documents/Sudoku/SudokuSingle/StochasticSearch/solutions';
+const solutionsDir = './solutions';
 if (!fs.existsSync(solutionsDir)) {
   fs.mkdirSync(solutionsDir, { recursive: true });
 }
